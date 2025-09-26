@@ -1146,7 +1146,7 @@ class SoC(LiteXModule, SoCCoreCompat):
             ram.mem.depth = len(contents)
 
     # Add/Init ROM ---------------------------------------------------------------------------------
-    def add_rom(self, name, origin, size, contents=[], mode="rx"):
+    def add_rom(self, name, origin, size, contents=[], mode="rwx"):
         self.add_ram(name, origin, size, contents, mode=mode)
 
     def init_rom(self, name, contents=[], auto_size=True):
