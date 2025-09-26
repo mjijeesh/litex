@@ -5,7 +5,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 
 from litex.build.generic_platform import GenericPlatform
-from litex.build.microsemi import common, libero_soc
+from litex.build.microsemi import common, libero_soc 
 
 # MicrosemiPlatform --------------------------------------------------------------------------------
 
@@ -13,12 +13,12 @@ class MicrosemiPlatform(GenericPlatform):
     _bitstream_ext = ".bit"
     _jtag_support  = False
 
-    _supported_toolchains = ["libero_soc_polarfire"]
+    _supported_toolchains = ["libero_soc"]
 
     def __init__(self, *args, toolchain="libero_soc_polarfire", **kwargs):
         GenericPlatform.__init__(self, *args, **kwargs)
-        if toolchain == "libero_soc_polarfire":
-            self.toolchain = libero_soc.MicrosemiLiberoSoCPolarfireToolchain()
+        if toolchain == "libero_soc":
+             self.toolchain = libero_soc.MicrosemiLiberoSoCToolchain()        
         else:
             raise ValueError(f"Unknown toolchain {toolchain}")
 
@@ -43,3 +43,12 @@ class MicrosemiPlatform(GenericPlatform):
         from_.attr.add("keep")
         to.attr.add("keep")
         self.toolchain.add_false_path_constraint(self, from_, to)
+        
+
+
+class MicrosemiPolarfirePlatform(MicrosemiPlatform):
+    device_family = "mpf"
+class MicrosemiSmartFusion2Platform(MicrosemiPlatform):
+    device_family = "m2s"
+class MicrosemiIGLOO2Platform(MicrosemiPlatform):
+    device_family = "m2gl"
