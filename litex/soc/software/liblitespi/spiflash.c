@@ -14,7 +14,7 @@
 
 #include "spiflash.h"
 
-//#define SPIFLASH_DEBUG
+#define SPIFLASH_DEBUG
 
 #if defined(CSR_SPIFLASH_BASE)
 
@@ -189,7 +189,8 @@ static void spiflash_write_enable(void)
 	transfer_cmd(w_buf, buf, 1);
 }
 
-static void page_program(uint32_t addr, uint8_t *data, int len)
+
+void page_program(uint32_t addr, uint8_t *data, int len)
 {
 	w_buf[0] = 0x02;
 	w_buf[1] = addr>>16;
@@ -199,6 +200,7 @@ static void page_program(uint32_t addr, uint8_t *data, int len)
 	transfer_cmd(w_buf, r_buf, len+4);
 }
 
+/* This is the 64K sector erase comamnd */
 static void spiflash_sector_erase(uint32_t addr)
 {
 	w_buf[0] = 0xd8;
@@ -209,7 +211,8 @@ static void spiflash_sector_erase(uint32_t addr)
 }
 
 /* erase page size in bytes, check flash datasheet */
-#define SPI_FLASH_ERASE_SIZE (64*1024)
+//#define SPI_FLASH_ERASE_SIZE (64*1024)
+#define SPI_FLASH_ERASE_SIZE (4*1024)
 
 #define min(x, y) (((x) < (y)) ? (x) : (y))
 
@@ -217,10 +220,14 @@ void spiflash_erase_range(uint32_t addr, uint32_t len)
 {
 	uint32_t i = 0;
 	uint32_t j = 0;
+	
+	spiflash_global_unlock();  // disable the write protect if not done already 
+	
 	for (i=0; i<len; i+=SPI_FLASH_ERASE_SIZE) {
 		printf("Erase SPI Flash @0x%08lx", ((uint32_t)addr+i));
 		spiflash_write_enable();
-		spiflash_sector_erase(addr+i);
+		//spiflash_sector_erase(addr+i);
+		spiflash_erase_4k_sector(addr+i);
 
 		while (spiflash_read_status_register() & 1) {
 			printf(".");
@@ -237,6 +244,38 @@ void spiflash_erase_range(uint32_t addr, uint32_t len)
 		}
 	}
 }
+
+
+/* Find your existing spiflash_global_unlock and replace it with this */
+
+void spiflash_global_unlock(void)
+{
+	//uint8_t buf[2]; /* Dummy buffer for response */
+	
+	// send the GLOBAL_UNPROTECT command 0x98 to flash memory 
+	
+	volatile uint8_t buf[1];
+	w_buf[0] = 0x98;
+	/*
+	 * This function now uses the "Write Status Register" (WRSR)
+	 * command to forcibly set all protection bits to 0.
+	 * This is more robust than the "Global Unlock" (0x98) command.
+	 */
+
+	printf("Sending Write Enable (0x06)...\n");	
+	spiflash_write_enable();
+	// send the GLOBAL_UNPROTECT command 0x98 to flash memory 
+	
+	transfer_cmd(w_buf, buf, 1);		
+	
+	printf("Waiting for register write to complete...\n");
+	while (spiflash_read_status_register() & 1); // Poll WIP bit
+	printf("Unlock complete.\n");
+}
+
+
+
+
 
 void spiflash_erase_4k_sector(uint32_t addr)
 {
@@ -312,13 +351,6 @@ void spiflash_init(void)
 	printf("Enabling Quad mode...\n");
 	spiflash_master_write(0x00000006, 1, 1, 0x1);
 	spiflash_master_write(0x00014307, 3, 1, 0x1);
-
-	/* Wait for the flash to finish writing the configuration */
-	while(spiflash_read_status_register() & 1) {
-#ifdef SPIFLASH_DEBUG
-		printf(".");
-#endif
-	}
 
 #ifdef SPIFLASH_MODULE_QPI_CAPABLE
 	printf("Switching to QPI mode...\n");
