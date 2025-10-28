@@ -32,6 +32,7 @@ from litex.soc.interconnect                  import axi
 from litex.soc.interconnect                  import ahb
 
 
+
 # Helpers ------------------------------------------------------------------------------------------
 
 def auto_int(x):
@@ -1083,6 +1084,51 @@ class SoC(LiteXModule, SoCCoreCompat):
 
     # Add/Init RAM ---------------------------------------------------------------------------------
     def add_ram(self, name, origin, size, contents=[], mode="rwx"):
+
+        # ##################################################################
+        # ### MODIFICATION START: Add special case for PolarFire AXI RAM ###
+        # ##################################################################
+        # Check if we are building for a PolarFire platform with a full AXI bus.
+        if self.bus.standard == "axi" and "polarfire" in self.platform.name.lower() and name == "rom":
+            self.logger.info(f"Using specialized {colorer('PolarFireAXIRAM', color='cyan')} for RAM block: {name}")
+
+            # NOTE: The 'contents' parameter is ignored for this IP.
+            # Initialization must be done via an init_file passed to the wrapper,
+            # which is not supported by this generic add_ram function.
+            if contents:
+                self.logger.warning(f"The 'contents' parameter for RAM '{name}' is ignored when using PolarFireAXIRAM.")
+
+            # Instantiate our specialized PolarFire AXI RAM wrapper.
+            # It creates its own internal bus, so we don't need to create one here.
+            # Instantiate our specialized PolarFire AXI RAM wrapper,
+            # using the "BIOS_HEX" placeholder to trigger auto-path resolution.
+
+            #from litex.soc.interconnect.axi.axi_full import PolarFireAXIROM
+            ### Now PolarFireAXIRAM is gettign imported from user project directory, later need to move thsi to  litex.soc.interconnect.axi.axi_full --TODO
+            from verilog_axi.axi.polarfire_ip import  PolarFireAXIRAM
+            ram = PolarFireAXIRAM(
+                platform = self.platform,
+                size     = size,
+                init_file = "BIOS_HEX",  ## This option tell the IP to load bios.hex from  build/software/bios/bios.hex
+                inst_name  = f"MPF_{name.upper()}" # Give each instance a unique IP name
+            )
+
+            # Add the RAM's bus as a slave to the main system bus.
+            self.bus.add_slave(name=name, slave=ram.bus, region=SoCRegion(origin=origin, size=size, mode=mode))
+            self.check_if_exists(name)
+            self.logger.info("RAM {} {} {}.".format(
+                colorer(name),
+                colorer("added", color="green"),
+                self.bus.regions[name]))
+            self.add_module(name=name, module=ram)
+
+            # Since 'contents' is ignored, we don't set the INIT config.
+            # The function is done for this special case, so we return early.
+            return
+        # ################################################################
+        # ### MODIFICATION END ###
+        # ################################################################
+
         ram_cls = {
             "wishbone": wishbone.SRAM,
             "axi-lite": axi.AXILiteSRAM,
@@ -1145,8 +1191,8 @@ class SoC(LiteXModule, SoCCoreCompat):
                 colorer(f"0x{contents_size:x}")))
             ram.mem.depth = len(contents)
 
-    # Add/Init ROM ---------------------------------------------------------------------------------
-    def add_rom(self, name, origin, size, contents=[], mode="rwx"):
+    # Add/Init ROM  ----------------------------------------------------------
+    def add_rom(self, name, origin, size, contents=[], mode="rx"):
         self.add_ram(name, origin, size, contents, mode=mode)
 
     def init_rom(self, name, contents=[], auto_size=True):
@@ -1866,7 +1912,7 @@ class LiteXSoC(SoC):
             )
 
     # Add Ethernet ---------------------------------------------------------------------------------
-    def add_ethernet(self, name="ethmac", phy=None, phy_cd=None, dynamic_ip=False, software_debug=False,
+    def add_ethernet(self, name="ethmac", phy=None, phy_cd="eth", dynamic_ip=False, software_debug=False,
         data_width              = 8,
         nrxslots                = 2, rxslots_read_only  = True,
         ntxslots                = 2, txslots_write_only = False,
@@ -1899,15 +1945,9 @@ class LiteXSoC(SoC):
             with_sys_datapath = with_sys_datapath)
         if not with_sys_datapath:
             # Use PHY's eth_tx/eth_rx clock domains.
-            if phy_cd is None:
-                eth_tx_clk_name = getattr(phy, "crg", phy).cd_eth_tx.name
-                eth_rx_clk_name = getattr(phy, "crg", phy).cd_eth_rx.name
-            else:
-                eth_tx_clk_name = phy_cd + "_tx"
-                eth_rx_clk_name = phy_cd + "_rx"
             ethmac = ClockDomainsRenamer({
-                "eth_tx": eth_tx_clk_name,
-                "eth_rx": eth_rx_clk_name})(ethmac)
+                "eth_tx": phy_cd + "_tx",
+                "eth_rx": phy_cd + "_rx"})(ethmac)
         self.add_module(name=name, module=ethmac)
 
         # Compute Regions size and add it to the SoC.
@@ -1971,7 +2011,7 @@ class LiteXSoC(SoC):
                     self.platform.add_false_path_constraints(self.crg.cd_sys.clk, eth_rx_clk)
 
     # Add Etherbone --------------------------------------------------------------------------------
-    def add_etherbone(self, name="etherbone", phy=None, phy_cd=None, data_width=8,
+    def add_etherbone(self, name="etherbone", phy=None, phy_cd="eth", data_width=8,
         mac_address             = 0x10e2d5000000,
         ip_address              = "192.168.1.50",
         arp_entries             = 1,
@@ -2007,16 +2047,10 @@ class LiteXSoC(SoC):
         )
         if not with_sys_datapath:
             # Use PHY's eth_tx/eth_rx clock domains.
-            if phy_cd is None:
-                eth_tx_clk_name = getattr(phy, "crg", phy).cd_eth_tx.name
-                eth_rx_clk_name = getattr(phy, "crg", phy).cd_eth_rx.name
-            else:
-                eth_tx_clk_name = phy_cd + "_tx"
-                eth_rx_clk_name = phy_cd + "_rx"
             ethcore = ClockDomainsRenamer({
-                "eth_tx": eth_tx_clk_name,
-                "eth_rx": eth_rx_clk_name,
-                "sys"   : {True: "sys", False: eth_rx_clk_name}[with_ethmac],
+                "eth_tx": phy_cd + "_tx",
+                "eth_rx": phy_cd + "_rx",
+                "sys"   : {True: "sys", False: phy_cd + "_rx"}[with_ethmac],
             })(ethcore)
         self.add_module(name=f"ethcore_{name}", module=ethcore)
 
@@ -2132,7 +2166,7 @@ class LiteXSoC(SoC):
         self.add_constant(f"{name}_MAX_CS",    len(pads.cs_n))
 
     # Add SPI Flash --------------------------------------------------------------------------------
-    def add_spi_flash(self, name="spiflash", mode="4x", clk_freq=20e6, module=None, phy=None, rate="1:1", software_debug=False, number=None, **kwargs):
+    def add_spi_flash(self, name="spiflash", mode="4x", clk_freq=20e6, module=None, phy=None, rate="1:1", software_debug=False, **kwargs):
         # Imports.
         from litespi import LiteSPI
         from litespi.phy.generic import LiteSPIPHY
@@ -2150,8 +2184,8 @@ class LiteXSoC(SoC):
         # PHY.
         spiflash_phy = phy
         if spiflash_phy is None:
-            spiflash_pads = self.platform.request(name if mode == "1x" else name + mode, number=number)
-            spiflash_phy = LiteSPIPHY(spiflash_pads, module, device=self.platform.device, default_divisor=default_divisor, rate=rate, **kwargs)
+            spiflash_pads = self.platform.request(name if mode == "1x" else name + mode)
+            spiflash_phy = LiteSPIPHY(spiflash_pads, module, device=self.platform.device, default_divisor=default_divisor, rate=rate)
 
         # Core.
         self.check_if_exists(name)
@@ -2170,16 +2204,15 @@ class LiteXSoC(SoC):
         self.add_constant(f"{name}_MODULE_TOTAL_SIZE", module.total_size)
         self.add_constant(f"{name}_MODULE_PAGE_SIZE",  module.page_size)
         if mode in [ "4x" ]:
-            if module.bus_width >= 4 and SpiNorFlashOpCodes.READ_1_1_4 in module.supported_opcodes:
+            if SpiNorFlashOpCodes.READ_1_1_4 in module.supported_opcodes:
                 self.add_constant(f"{name}_MODULE_QUAD_CAPABLE")
-            if module.cmd_width >= 4 and SpiNorFlashOpCodes.READ_4_4_4 in module.supported_opcodes:
+            if SpiNorFlashOpCodes.READ_4_4_4 in module.supported_opcodes:
                 self.add_constant(f"{name}_MODULE_QPI_CAPABLE")
         if software_debug:
             self.add_constant(f"{name}_DEBUG")
 
     # Add SPI RAM --------------------------------------------------------------------------------
     def add_spi_ram(self, name="spiram", mode="4x", clk_freq=20e6, module=None, phy=None, rate="1:1", software_debug=False,
-        number=None,
         l2_cache_size           = 8192,
         l2_cache_reverse        = False,
         l2_cache_full_memory_we = True,
@@ -2202,8 +2235,8 @@ class LiteXSoC(SoC):
         spiram_phy = phy
         if spiram_phy is None:
             self.check_if_exists(f"{name}_phy")
-            spiram_pads = self.platform.request(name if mode == "1x" else name + mode, number=number)
-            spiram_phy = LiteSPIPHY(spiram_pads, module, device=self.platform.device, default_divisor=default_divisor, rate=rate, **kwargs)
+            spiram_pads = self.platform.request(name if mode == "1x" else name + mode)
+            spiram_phy = LiteSPIPHY(spiram_pads, module, device=self.platform.device, default_divisor=default_divisor, rate=rate)
 
         # Core.
         self.check_if_exists(f"{name}_mmap")
@@ -2242,9 +2275,9 @@ class LiteXSoC(SoC):
         self.add_constant(f"{name}_MODULE_TOTAL_SIZE", module.total_size)
         self.add_constant(f"{name}_MODULE_PAGE_SIZE",  module.page_size)
         if mode in [ "4x" ]:
-            if module.bus_width >= 4 and SpiNorFlashOpCodes.READ_1_1_4 in module.supported_opcodes:
+            if SpiNorFlashOpCodes.READ_1_1_4 in module.supported_opcodes:
                 self.add_constant(f"{name}_MODULE_QUAD_CAPABLE")
-            if module.cmd_width >= 4 and SpiNorFlashOpCodes.READ_4_4_4 in module.supported_opcodes:
+            if SpiNorFlashOpCodes.READ_4_4_4 in module.supported_opcodes:
                 self.add_constant(f"{name}_MODULE_QPI_CAPABLE")
         if software_debug:
             self.add_constant(f"{name}_DEBUG")

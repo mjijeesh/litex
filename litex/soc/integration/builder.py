@@ -326,7 +326,74 @@ class Builder:
             dst_dir  = os.path.join(self.software_dir, name)
             makefile = os.path.join(src_dir, "Makefile")
             if self.compile_software:
-                subprocess.check_call(["make", f"-j{cpu_count}", "-C", dst_dir, "-f", makefile])
+                subprocess.check_call(["make", f"-j{cpu_count}", "-C", dst_dir, "-f", makefile])                
+               
+    def  generate_hex(self,compile_bios=True):
+        # --- CORRECTED SECTION START ---
+            # If we just built the BIOS, also generate the .hex file.
+        # Compile all software packages.
+            
+        print("INFO: Generating BIOS .hex file...")
+        # Compile software package.
+
+        for name, src_dir in self.software_packages:
+            # Skip BIOS compilation when disabled.
+            if name == "bios" and not compile_bios:
+                continue
+        dst_dir  = os.path.join(self.software_dir, name)
+        makefile = os.path.join(src_dir, "Makefile")
+                    
+        # Dynamically get the toolchain prefix from the CPU object for robustness
+        if hasattr(self.soc, "cpu") and hasattr(self.soc.cpu, "toolchain_prefix"):
+            toolchain_prefix = self.soc.cpu.toolchain_prefix
+        else:
+           # Fallback for safety
+            toolchain_prefix = "riscv64-unknown-elf-"
+
+        elf_file = os.path.join(dst_dir, "bios.elf")
+        hex_file = os.path.join(dst_dir, "bios.hex")
+        
+        # Check if the ELF file exists before trying to convert it
+        if os.path.exists(elf_file):
+            
+            # --- START OF MODIFICATION ---
+            
+            # Default objcopy flags
+            objcopy_flags = "-O ihex"
+            
+            # Check for SmartFusion2 (m2s)
+            try:
+                device_name = self.soc.platform.device.lower()
+                if device_name.startswith("m2s"):
+                    # For SmartFusion2 eNVM, the programmer needs a 0-based hex file.
+                    # We get the ROM base address (e.g., 0x60000000) 
+                    # and tell objcopy to subtract it from all addresses.
+                    if "rom" in self.soc.mem_regions:
+                        rom_base = self.soc.mem_regions["rom"].origin
+                        objcopy_flags += f" --change-addresses -{rom_base}"
+                        # --- MODIFIED PRINT STATEMENT ---
+                        # Use f"{rom_base:X}" to format the integer as uppercase hex
+                        print(f"INFO: SmartFusion2 (m2s) target detected. Applying 0x{rom_base:X} offset to {hex_file} for eNVM.")
+                        # --- END OF MODIFICATION ---
+                    else:
+                        print("WARNING: SmartFusion2 target, but 'rom' region not found in memory map.")
+            except Exception as e:
+                # Fail safely if platform info isn't available for some reason
+                print(f"WARNING: Could not detect device type for hex generation: {e}")
+
+            # Build the final command
+            cmd = f"{toolchain_prefix}objcopy {objcopy_flags} {elf_file} {hex_file}"
+            
+            # --- END OF MODIFICATION ---
+
+            # Run the command (this was moved inside the if-block to fix a bug)
+            if os.system(cmd) == 0:
+                print(f"INFO:hex file successfully generated at: {hex_file}")
+            else:
+                print("ERROR: .hex file generation failed")
+        else:
+            print(f"ERROR: Cannot generate .hex file. Missing: {elf_file}")
+
 
     def _initialize_rom_software(self):
         # Get BIOS data from compiled BIOS binary.
@@ -393,6 +460,7 @@ class Builder:
                     self._check_meson()
                 self._prepare_rom_software()
                 self._generate_rom_software(compile_bios=use_bios)
+                self.generate_hex()
 
                 # Initialize Memories.
                 # Allow User Design to optionally initialize Memories through SoC.init_ram/init_rom.
