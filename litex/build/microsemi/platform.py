@@ -15,8 +15,14 @@ class MicrosemiPlatform(GenericPlatform):
 
     _supported_toolchains = ["libero_soc"]
 
-    def __init__(self, *args, toolchain="libero_soc_polarfire", **kwargs):
+    def __init__(self, *args, toolchain="libero_soc", **kwargs):
         GenericPlatform.__init__(self, *args, **kwargs)
+        
+        # --- MODIFIED ---
+        # List to store (instance, x, y) tuples
+        self.placement_constraints = []
+        # --- END ---
+
         if toolchain == "libero_soc":
              self.toolchain = libero_soc.MicrosemiLiberoSoCToolchain()        
         else:
@@ -34,6 +40,26 @@ class MicrosemiPlatform(GenericPlatform):
 
     def build(self, *args, **kwargs):
         return self.toolchain.build(self, *args, **kwargs)
+
+    # --- MODIFIED METHOD ---
+    def add_placement_constraint(self, instance, x, y):
+        """
+        Adds a Libero location constraint (PDC) for a specific instance
+        using X/Y coordinates.
+        This list is processed by the toolchain during the build phase.
+
+        Parameters:
+        -----------
+        instance : str
+            The hierarchical instance path from the top module
+            (e.g., "my_ram_wrapper_0/bram_instance").
+        x : str or int
+            The X coordinate for the placement.
+        y : str or int
+            The Y coordinate for the placement.
+        """
+        self.placement_constraints.append((instance, x, y))
+    # --- END OF MODIFIED METHOD ---
 
     def add_false_path_constraint(self, from_, to):
         if hasattr(from_, "p"):
