@@ -35,6 +35,44 @@ class MicrosemiLiberoSoCToolchain(GenericToolchain):
         """
         self.ip_cores.append((name, ip_type, params))
 
+
+    def _build_bios_hex(self):
+        """
+        Converts the LiteX BIOS binary file to an Intel HEX file using objcopy.
+        This runs at the start of the hardware build to initialize Block RAMs.
+        """
+        # LiteX toolchain runs in the gateware directory. 
+        # The BIOS is typically located in ../software/bios/bios.bin.
+        bios_bin_path = os.path.join("..", "software", "bios", "bios.bin")
+        bios_hex_file = "bios.hex"
+        
+        print(f"## Converting {bios_bin_path} to {bios_hex_file} for IP initialization using objcopy...")
+
+        if not which("objcopy"):
+            raise OSError("Unable to find 'objcopy', please ensure GNU binutils is installed and in your PATH.")
+
+        if not os.path.exists(bios_bin_path):
+            # This addresses the "Warning: Binary file bios.bin not found" in your log.
+            # The path must be relative to the gateware directory.
+            print(f"Warning: Binary file {bios_bin_path} not found. Skipping hex conversion. "
+                  "Ensure software build (e.g., BIOS compilation) completed successfully.")
+            return
+
+        # objcopy command: -I binary (input format) -O ihex (output format)
+        cmd = ["objcopy", "-I", "binary", "-O", "ihex", bios_bin_path, bios_hex_file]
+        #cmd = ["objcopy", "-O", "ihex", bios_bin_path, bios_hex_file]
+        
+        try:
+            # Execute the objcopy command
+            if subprocess.call(cmd) != 0:
+                raise OSError(f"objcopy failed to convert {bios_bin_path} to {bios_hex_file}")
+            
+            print(f"## Successfully created {bios_hex_file} using objcopy.")
+            
+        except Exception as e:
+            raise OSError(f"Error during hex conversion using objcopy: {e}")
+
+
     # --- ADDED: Method to add custom component TCL commands ---
     def add_cxf_import(self, tcl_commands_list):
         """
@@ -190,7 +228,13 @@ class MicrosemiLiberoSoCToolchain(GenericToolchain):
 
     def build_project(self):
         """Calls the correct project builder based on device name."""
+        
+
+        # 🚀 Step 1: Convert BIOS binary to hex file before IP generation
+        self._build_bios_hex()
+        
         # Generate the IP core script before the main project script
+
         ip_script_filename = self.build_ip_cores_script()
 
         device = self.platform.device.lower()
